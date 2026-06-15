@@ -1,26 +1,6 @@
 import fitz 
 import sys
-import re
-from pprint import pp
 
-def _normaliza_emissor(emissor: str) -> str:
-    temp = emissor.replace(".", " ").strip()
-    return temp
-
-
-def _normaliza_numeros(numeros: str) -> str:
-    temp = numeros.replace(".", "")
-    result = ""
-    encontrou_digito = False
-
-    for c in temp:
-        if c != "0":
-            encontrou_digito = True
-
-        if encontrou_digito:
-            result += c
-
-    return result or "0"
 
 
 def _carrega_nota_fiscal(path: str) -> str | None:
