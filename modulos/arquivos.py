@@ -15,7 +15,7 @@ def criar_pastas(path: str, pastas: list) -> bool:
     
     for pasta in pastas:
         caminho_completo = os.path.join(path, pasta)
-        os.mkdir(caminho_completo, exist_ok=True)
+        os.mkdir(caminho_completo)
 
 
 

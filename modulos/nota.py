@@ -54,49 +54,12 @@ def _processar_texto(texto: str) -> dict:
         }
     """
 
-    nota = {}
-
-    # Indentificando a chave de acesso.
-    chaves = re.findall(r"(?:\d\s*){44}", texto)
-
-    if chaves:
-        chave_de_acesso = re.sub(r"\D", "", chaves[0])
-        nota[chave_de_acesso] = {}
-    
-    else:
-        raise ValueError("Não foi possivel indentificar a chave de acesso, necessario revissão manual.")
-    
-
-        
-    # Primeiro passo indentificar o TIPO e o NUMERO da nota.    
-    if "CT-E" in texto or "CONHECIMENTO DE TRANSPORTE ELETRÔNICO" in texto:
-        nota[chave_de_acesso]['tipo'] = "CTE"
-
-    elif "NFC-E" in texto or "NOTA FISCAL DE CONSUMIDOR ELETRÔNICA" in texto:
-        nota[chave_de_acesso]['tipo'] = "NFCE"
-
-    elif "NF-E" in texto or "NOTA FISCAL ELETRÔNICA" in texto:
-        nota[chave_de_acesso]['tipo'] = "NFE"
-
-    else:
-        nota[chave_de_acesso]['tipo'] = "DESCONHECIDO"
-        #raise ValueError("Não foi possivel definir o TIPO da nota, necessario revisão manual.")
-    
-    # Indentificando o numero da nota.
-    resultado  = re.search(r"N[ºo]\.?\s*([\d\.]+)", texto)
-
-    if resultado: 
-        nota[chave_de_acesso]['numero'] = _normaliza_numeros(resultado.group(1))
+    pass
 
 
-    # Indentificando o emitente.
-    padrao = r"Identificação do emitente\s*\n\s*(.+)"
-    resultado = re.search(padrao, texto, re.IGNORECASE)
 
-    if resultado:
-        nota[chave_de_acesso]['emissor'] = _normaliza_emissor(resultado.group(1).strip())
-    
-    return nota
+
+
 
 
 if __name__ == '__main__':
