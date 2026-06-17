@@ -22,6 +22,7 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from modulos.utils import fmt_chave as _fmt_chave
 
 
 # ── Paleta base (tons formais de documento oficial) ───────────────────────────
@@ -795,6 +796,206 @@ def gerar_dabpe(dados: dict, saida: str) -> None:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
+# NFS-e ISS.net / ABRASF (São Paulo e municípios ABRASF)
+# ════════════════════════════════════════════════════════════════════════════════
+
+def gerar_nfse_issnet(dados: dict, saida: str) -> None:
+    d = dados["dados"]
+    W, H = A4
+    ML = MR = 8*mm
+    LW = W - ML - MR
+
+    doc = SimpleDocTemplate(saida, pagesize=A4,
+                            leftMargin=ML, rightMargin=MR,
+                            topMargin=8*mm, bottomMargin=8*mm)
+    story = []
+    cor = colors.HexColor("#1B4F72")   # azul ISS municipal
+
+    # Status badge
+    status_badge = "● " + d.get("status", "")
+
+    story.append(_titulo_hdr(
+        cor,
+        "NOTA FISCAL DE SERVIÇOS ELETRÔNICA",
+        "NFS-e  ·  Padrão ISS.net / ABRASF  ·  Emissão Municipal",
+        LW,
+        numero=dados.get("numero", ""),
+        status=status_badge,
+    ))
+    story.append(_sp())
+
+    # ── Identificação ───────────────────────────────────────────────────────
+    story.append(_sec("IDENTIFICAÇÃO DA NFS-e", LW, cor=cor))
+    c4 = LW / 4
+    story.append(_grade([
+        [Paragraph("Número NFS-e",             S["lbl"]), Paragraph("Série / Nº RPS",       S["lbl"]),
+         Paragraph("Data Emissão NFS-e",        S["lbl"]), Paragraph("Data Fato Gerador",    S["lbl"])],
+        [Paragraph(d.get("numero","—"),         S["val"]),
+         Paragraph(f'{d.get("serie_rps","—")} / {d.get("num_rps","—")}', S["val_s"]),
+         Paragraph(d.get("dhEmi","—"),          S["val_s"]),
+         Paragraph(d.get("dhFato","—"),         S["val_s"])],
+        [Paragraph("Tipo RPS",                 S["lbl"]), Paragraph("Nº Lote",              S["lbl"]),
+         Paragraph("Nº Guia ISS",              S["lbl"]), Paragraph("Situação",             S["lbl"])],
+        [Paragraph(d.get("tipo_rps","—"),       S["val_s"]),
+         Paragraph(d.get("num_lote","—"),       S["val_s"]),
+         Paragraph(d.get("num_guia","—"),       S["val_s"]),
+         Paragraph(d.get("status","—"),         S["val_s"])],
+        [Paragraph("Tributação",               S["lbl"]), Paragraph("Regime Tributário",    S["lbl"]),
+         Paragraph("ISS Retido na Fonte",       S["lbl"]), Paragraph("Código do Serviço",   S["lbl"])],
+        [Paragraph(d.get("tributacao","—"),     S["val_s"]),
+         Paragraph(d.get("opc_simples","—"),    S["val_s"]),
+         Paragraph(d.get("retido","—"),         S["val_s"]),
+         Paragraph(d.get("cod_servico","—"),    S["val_s"])],
+    ], [c4]*4))
+
+    # Chave nacional (44 dígitos)
+    chave_nac = d.get("chave_nac","") or dados.get("chave","")
+    if chave_nac:
+        story.append(_sp(1))
+        story.append(_chave_box(chave_nac, LW, cor))
+
+    # Código de verificação
+    if d.get("cod_verif"):
+        cv_tab = Table([
+            [Paragraph("Código de Verificação", S["lbl"]),
+             Paragraph("Inscrição Municipal do Prestador", S["lbl"])],
+            [Paragraph(d.get("cod_verif","—"),   _st("cv", fn="Helvetica-Bold", fs=10, tc=cor, ld=12)),
+             Paragraph(d.get("inscr_prest","—"),  S["val_s"])],
+        ], colWidths=[LW*0.5, LW*0.5])
+        cv_tab.setStyle(TableStyle([
+            ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#EBF5FB")),
+            ("BOX",           (0,0),(-1,-1), 0.8, cor),
+            ("INNERGRID",     (0,0),(-1,-1), 0.4, CINZA_BD),
+            ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+            ("TOPPADDING",    (0,0),(-1,-1), 4), ("BOTTOMPADDING",(0,0),(-1,-1),4),
+            ("LEFTPADDING",   (0,0),(-1,-1), 6), ("RIGHTPADDING", (0,0),(-1,-1),6),
+        ]))
+        story.append(_sp(1))
+        story.append(cv_tab)
+
+    story.append(_sp())
+
+    # ── Prestador ───────────────────────────────────────────────────────────
+    story.append(_sec("PRESTADOR DE SERVIÇOS", LW, cor=cor))
+    cA, cB = LW * 0.60, LW * 0.40
+    story.append(_grade([
+        [Paragraph("Razão Social",              S["lbl"]), Paragraph("CNPJ",               S["lbl"])],
+        [Paragraph(d.get("emit_nome","—"),      S["val"]), Paragraph(d.get("emit_cnpj","—"),S["val_s"])],
+        [Paragraph("Endereço",                  S["lbl"]), Paragraph("Bairro",             S["lbl"])],
+        [Paragraph(d.get("emit_end","—"),       S["val_s"]),Paragraph(d.get("emit_bairro","—"),S["val_s"])],
+        [Paragraph("Município / UF",            S["lbl"]), Paragraph("CEP",                S["lbl"])],
+        [Paragraph(f'{d.get("emit_cidade","—")} / {d.get("emit_uf","")}', S["val_s"]),
+         Paragraph(d.get("emit_cep","—"),       S["val_s"])],
+    ], [cA, cB]))
+    story.append(_sp())
+
+    # ── Tomador ─────────────────────────────────────────────────────────────
+    story.append(_sec("TOMADOR DE SERVIÇOS", LW, cor=cor))
+    story.append(_grade([
+        [Paragraph("Razão Social / Nome",       S["lbl"]), Paragraph("CNPJ / CPF",         S["lbl"])],
+        [Paragraph(d.get("toma_nome","—"),      S["val"]), Paragraph(d.get("toma_doc","—"), S["val_s"])],
+        [Paragraph("Endereço",                  S["lbl"]), Paragraph("Bairro",             S["lbl"])],
+        [Paragraph(d.get("toma_end","—"),       S["val_s"]),Paragraph(d.get("toma_bairro","—"),S["val_s"])],
+        [Paragraph("Município / UF",            S["lbl"]), Paragraph("CEP",                S["lbl"])],
+        [Paragraph(f'{d.get("toma_cidade","—")} / {d.get("toma_uf","")}', S["val_s"]),
+         Paragraph(d.get("toma_cep","—"),       S["val_s"])],
+        [Paragraph("E-mail",                    S["lbl"]), Paragraph("",                   S["lbl"])],
+        [Paragraph(d.get("toma_email","—"),     S["val_x"]),Paragraph("",                  S["lbl"])],
+    ], [cA, cB]))
+    story.append(_sp())
+
+    # ── Discriminação ───────────────────────────────────────────────────────
+    story.append(_sec("DISCRIMINAÇÃO DOS SERVIÇOS", LW, cor=cor))
+    # Limpa e formata a discriminação com quebras de linha
+    disc_raw = d.get("xDescServ","—")
+    disc_fmt = disc_raw.replace(chr(10), "<br/>").replace(chr(13), "")
+    disc_tab = Table([
+        [Paragraph("Descrição / Discriminação dos Serviços Prestados", S["lbl"])],
+        [Paragraph(disc_fmt, S["desc"])],
+    ], colWidths=[LW])
+    disc_tab.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), BRANCO),
+        ("BOX",           (0,0),(-1,-1), 0.4, CINZA_BD),
+        ("INNERGRID",     (0,0),(-1,-1), 0.3, CINZA_BD),
+        ("TOPPADDING",    (0,0),(-1,-1), 3), ("BOTTOMPADDING",(0,0),(-1,-1),3),
+        ("LEFTPADDING",   (0,0),(-1,-1), 5), ("RIGHTPADDING", (0,0),(-1,-1),5),
+        ("VALIGN",        (0,0),(-1,-1), "TOP"),
+    ]))
+    story.append(disc_tab)
+    story.append(_sp())
+
+    # ── Valores ─────────────────────────────────────────────────────────────
+    story.append(_sec("VALORES E TRIBUTOS", LW, cor=cor))
+    c3 = LW / 3
+
+    # Linha principal
+    vals_tab = Table([
+        [Paragraph("Valor dos Serviços",  S["lbl"]),
+         Paragraph("Alíquota ISS",        S["lbl"]),
+         Paragraph("Valor do ISS",        S["lbl"])],
+        [Paragraph(d.get("vServ","—"),    _st("vs", fn="Helvetica-Bold", fs=12, tc=cor, ld=14)),
+         Paragraph(d.get("pAliq","—"),    S["val"]),
+         Paragraph(d.get("vISSQN","—"),   S["val"])],
+        [Paragraph("ISS Retido na Fonte", S["lbl"]),
+         Paragraph("Valor do Crédito",    S["lbl"]),
+         Paragraph("",                    S["lbl"])],
+        [Paragraph(d.get("retido","—"),   S["val_s"]),
+         Paragraph(d.get("val_credito","—"), S["val_s"]),
+         Paragraph("",                    S["lbl"])],
+    ], colWidths=[c3]*3)
+    vals_tab.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#EBF5FB")),
+        ("BOX",           (0,0),(-1,-1), 0.8, cor),
+        ("INNERGRID",     (0,0),(-1,-1), 0.4, CINZA_BD),
+        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0),(-1,-1), 4), ("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ("LEFTPADDING",   (0,0),(-1,-1), 5), ("RIGHTPADDING", (0,0),(-1,-1),5),
+    ]))
+    story.append(vals_tab)
+    story.append(_sp(1.5))
+
+    # Carga tributária aproximada (IBPT)
+    ibpt_tab = Table([
+        [Paragraph(
+            f"Carga Tributária Aproximada ({d.get('fonteCarga','IBPT')}): "
+            f"<b>{d.get('vCargaTrib','—')}</b>  ({d.get('pctCargaTrib','—')} do valor total)",
+            _st("ibpt", fn="Helvetica", fs=7, tc=colors.HexColor("#555"), ld=9)),
+        ],
+    ], colWidths=[LW])
+    ibpt_tab.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#FFF9E6")),
+        ("BOX",           (0,0),(-1,-1), 0.4, colors.HexColor("#C8A700")),
+        ("TOPPADDING",    (0,0),(-1,-1), 4), ("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ("LEFTPADDING",   (0,0),(-1,-1), 6), ("RIGHTPADDING", (0,0),(-1,-1),6),
+    ]))
+    story.append(ibpt_tab)
+
+    # Total em destaque
+    story.append(_sp(1.5))
+    tot_tab = Table([
+        [Paragraph("VALOR TOTAL DOS SERVIÇOS",
+                   _st("tl", fn="Helvetica-Bold", fs=8, tc=BRANCO, ld=10)),
+         Paragraph(d.get("vServ","—"),
+                   _st("tv", fn="Helvetica-Bold", fs=16, tc=BRANCO, al=TA_RIGHT, ld=18))],
+    ], colWidths=[LW * 0.5, LW * 0.5])
+    tot_tab.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), cor),
+        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0),(-1,-1), 6), ("BOTTOMPADDING",(0,0),(-1,-1),6),
+        ("LEFTPADDING",   (0,0),(-1,-1), 8), ("RIGHTPADDING", (0,0),(-1,-1),8),
+    ]))
+    story.append(tot_tab)
+    story.append(_sp(2))
+
+    story.append(_rodape(
+        f"NFS-e nº {dados.get('numero','')}  ·  Emitida em {d.get('dhEmi','')}  ·  "
+        f"Cód. Verificação: {d.get('cod_verif','')}  ·  "
+        "Documento auxiliar sem validade fiscal — consulte o original no portal da prefeitura."
+    ))
+    doc.build(story)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
 # NFS-e municipal (legado)
 # ════════════════════════════════════════════════════════════════════════════════
 
@@ -871,7 +1072,9 @@ def gerar_pdf_de_xml(dados: dict, caminho_saida: str) -> None:
     elif tipo == "BP-E":
         gerar_dabpe(dados, caminho_saida)
     elif tipo == "NFS-E":
-        if d.get("_legado"):
+        if d.get("_issnet"):
+            gerar_nfse_issnet(dados, caminho_saida)
+        elif d.get("_legado"):
             gerar_nfse_municipal(dados, caminho_saida)
         else:
             gerar_nfse_nacional(dados, caminho_saida)

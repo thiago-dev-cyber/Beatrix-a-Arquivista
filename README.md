@@ -1,86 +1,134 @@
-# Beatrix, a Arquivista.
+# Beatrix, a Arquivista
 
 > Organizando documentos fiscais desde antes de você lembrar onde salvou o PDF.
 
-Beatrix, a Arquivista é uma ferramenta open source para organização automática de documentos fiscais brasileiros.
+Beatrix é uma ferramenta open source para organização automática de documentos fiscais brasileiros. Jogue PDFs ou XMLs numa pasta, rode o script, e os arquivos saem renomeados e organizados no padrão `TIPO NUMERO EMISSOR.pdf`.
 
-O projeto nasceu para automatizar tarefas administrativas repetitivas, como identificação, renomeação, classificação e arquivamento de notas fiscais em PDF.
-
-Atualmente o foco é o processamento local de documentos fiscais, mas a visão de longo prazo é construir uma plataforma robusta para indexação, validação e gestão documental.
+---
 
 ## Funcionalidades
 
-* Leitura de PDFs.
-* Extração de texto.
-* Identificação da chave de acesso.
-* Identificação do tipo do documento (NF-e, NFC-e e CT-e).
-* Extração do número da nota.
-* Extração do emitente.
-* Renomeação automática de arquivos.
-* Organização em diretórios de saída.
+- Processa **PDFs** (extrai texto via PyMuPDF e classifica por score) e **XMLs** (extrai dados estruturados e gera um PDF com layout fiel ao documento)
+- Renomeia automaticamente no padrão `TIPO NUMERO EMISSOR.pdf`
+- Suporte a **7 tipos de documento fiscal**:
 
-## Exemplo
+| Tipo | Modelo | Fonte |
+|---|---|---|
+| NF-e | 55 | PDF ou XML |
+| NFC-e | 65 | PDF ou XML |
+| NFS-e | — | PDF, XML nacional (SPED/RFB) ou XML municipal (ISS.net/ABRASF) |
+| CT-e | 57 | PDF ou XML |
+| CT-e OS | 67 | PDF ou XML |
+| MDF-e | 58 | PDF ou XML |
+| BP-e | 63 | PDF ou XML |
 
-Antes:
+---
 
-```text
+## Instalação
+
+```bash
+pip install pymupdf reportlab lxml
+```
+
+> `pymupdf` é necessário apenas para processar PDFs. XMLs funcionam sem ele.
+
+---
+
+## Uso
+
+1. Coloque PDFs e/ou XMLs na pasta `/entrada`
+2. Execute:
+
+```bash
+python main.py
+```
+
+3. Arquivos processados aparecem em `/saida`
+
+**Exemplo:**
+
+```
 entrada/
 ├── documento_001.pdf
-├── scan.pdf
-└── nota.pdf
-```
+├── nfe_123.xml
+└── nfse_amazon.xml
 
-Depois:
-
-```text
 saida/
-├── NFE 1234 EMPRESA ABC.pdf
-├── CTE 5678 TRANSPORTADORA XPTO.pdf
-└── NFCE 9012 MERCADO CENTRAL.pdf
+├── NF-E 1234 EMPRESA ABC.pdf
+├── NF-E 123 EMPRESA TESTE.pdf
+└── NFS-E 5859267 AMAZON AWS SERVICOS BRASIL LTDA.pdf
 ```
 
-## Objetivos do projeto
+---
 
-### Curto prazo
+## Arquitetura
 
-* Melhorar a extração de informações.
-* Suportar múltiplos layouts de DANFE.
-* Criar manifesto de documentos processados.
-* Detectar documentos duplicados.
+```
+beatrix/
+├── main.py                        # Ponto de entrada
+└── modulos/
+    ├── utils.py                   # Formatadores e helpers compartilhados
+    ├── xml_extrator.py            # Lê XMLs fiscais e retorna dict padronizado
+    ├── extratores/                # Extratores para PDFs (classificação por score)
+    │   ├── base.py                # Classe base com extrair_chave e extrair_numero
+    │   ├── nfe.py
+    │   ├── nfce.py
+    │   ├── nfse.py
+    │   ├── cte.py
+    │   ├── cte_os.py
+    │   ├── mdfe.py
+    │   └── bpe.py
+    └── geradores/
+        └── pdf_generator.py      # Gera PDFs com layout fiel a partir de XMLs
+```
 
-### Médio prazo
+### Fluxo PDF
 
-* Suporte a XML de NF-e, NFC-e e CT-e.
-* Sistema de validação por chave de acesso.
-* Tratamento de exceções e documentos inconsistentes.
-* Relatórios de processamento.
+```
+PDF → PyMuPDF → texto bruto → score em cada extrator → extrator vencedor → extrair() → renomear
+```
 
-### Longo prazo
+### Fluxo XML
 
-* OCR para documentos digitalizados.
-* Interface gráfica.
-* Interface web.
-* Busca e indexação documental.
-* Organização automática por regras.
+```
+XML → xml_extrator.extrair_xml() → dict padronizado → pdf_generator.gerar_pdf_de_xml() → salvar
+```
 
+### Adicionando um novo tipo de documento
 
+**Para PDFs:** crie uma subclasse de `Extrator` em `modulos/extratores/`, defina `tipo`, `pesos` e `extrair_emissor`. Registre em `EXTRATORES` no `main.py`.
+
+**Para XMLs:** adicione um extrator `_novo_tipo(root)` em `xml_extrator.py`, registre no dicionário `dispatch` e crie o gerador correspondente em `pdf_generator.py`.
+
+---
+
+## Objetivos
+
+### Próximos passos
+
+- Manifesto de documentos processados (CSV/JSON)
+- Detecção de duplicatas por chave de acesso
+- OCR para PDFs digitalizados (scans)
+
+### Futuro
+
+- Interface gráfica (desktop)
+- Interface web
+- Busca e indexação por emitente, período, valor
+- Organização automática por regras configuráveis
+
+---
 
 ## Filosofia
 
-Beatrix, a Arquivista acredita que ninguém deveria perder tempo renomeando manualmente dezenas de notas fiscais.
+Beatrix acredita que ninguém deveria perder tempo renomeando dezenas de notas fiscais manualmente. Computadores existem justamente para esse tipo de trabalho.
 
-Computadores existem justamente para fazer esse tipo de trabalho repetitivo.
+---
 
 ## Contribuindo
 
-Contribuições são bem-vindas.
-
-* Abra uma Issue para reportar problemas.
-* Sugira melhorias.
-* Envie Pull Requests.
+Contribuições são bem-vindas. Abra uma Issue para reportar problemas ou sugerir melhorias, e envie Pull Requests.
 
 ## Licença
 
-Este projeto é distribuído sob a GNU General Public License v3.0 (GPL-3.0).
-
-Consulte o arquivo LICENSE para mais informações.
+Distribuído sob a [GNU General Public License v3.0](LICENSE).

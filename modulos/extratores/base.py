@@ -1,113 +1,98 @@
+"""
+base.py — Classe base para extratores de PDF.
+
+Define o contrato (ABC) e implementa os métodos que são idênticos
+em todos os sete tipos de documento, eliminando duplicação.
+"""
+from __future__ import annotations
+import re
 from abc import ABC, abstractmethod
 
 
 class Extrator(ABC):
     """
-    Classe base para extratores de documentos fiscais.
+    Contrato para extratores de documentos fiscais em PDF.
 
-    A Beatrix utiliza essa classe como contrato para todos os tipos de
-    documentos suportados (NF-e, NFC-e, CT-e, etc).
+    Fluxo:
+        1. score(texto)  → float  — confiança de que é este tipo
+        2. extrair(texto) → dict  — dados estruturados
+        3. main.py seleciona o extrator com maior score ≥ 0.30
 
-    O fluxo padrão é:
-
-        1. Receber texto bruto extraído de um PDF
-        2. Cada extrator calcula um score de compatibilidade
-        3. O extrator com maior score é selecionado
-        4. O método `extrair()` retorna os dados estruturados
-        5. Os dados são enviados para o manifesto (indexação)
-
-    ------------------------------------------------------------------------
-
-    Responsabilidades da classe base:
-        - Definir o fluxo padrão de extração (Template Method)
-        - Padronizar o formato de saída
-        - Forçar implementação dos métodos específicos
-
-    Responsabilidades das subclasses:
-        - Calcular score de compatibilidade com o texto
-        - Extrair campos específicos do documento
-        - Definir regras de parsing por tipo de nota
-
-    ------------------------------------------------------------------------
-
-    Atributos esperados no retorno de `extrair()`:
-
-        {
-            "tipo": str,     # Tipo do documento (NFCE, NFE, CTE...)
-            "numero": str,   # Número da nota fiscal
-            "chave": str,    # Chave de acesso (44 dígitos)
-            "emissor": str   # Nome do emitente
-        }
+    Retorno padronizado de extrair():
+        { "tipo": str, "numero": str, "chave": str, "emissor": str }
     """
+
+    # ── Contrato obrigatório ───────────────────────────────────────────────
 
     @property
     @abstractmethod
     def tipo(self) -> str:
-        """
-        Identificador fixo do tipo de documento.
+        """Identificador fixo: "NF-E", "NFC-E", "CT-E", etc."""
 
-        Exemplo:
-            "NFCE", "NFE", "CTE"
-        """
-        pass
-
+    @property
+    @abstractmethod
+    def pesos(self) -> dict[str, float]:
+        """Mapa termo → peso para cálculo do score."""
 
     @abstractmethod
+    def extrair_emissor(self, texto: str) -> str | None:
+        """Extrai o nome do emitente (varia por layout de documento)."""
+
+    # ── Implementado na base (igual em todos os tipos) ────────────────────
+
     def score(self, texto: str) -> float:
         """
-        Calcula o nível de confiança de que este extrator
-        é o mais adequado para o texto fornecido.
-
-        Retorna:
-            float entre 0.0 e 1.0
-
-        Interpretação:
-            0.0 → não é esse tipo de documento
-            1.0 → certeza absoluta
-
-        O sistema usa esse valor para selecionar o melhor extrator
-        entre todos os disponíveis.
+        Score padrão: soma dos pesos dos termos encontrados
+        + bônus se a chave de acesso bate com o modelo esperado.
+        Subclasses podem sobrescrever para adicionar penalidades.
         """
-        pass
+        tu = texto.upper()
+        total = sum(peso for termo, peso in self.pesos.items() if termo in tu)
 
+        chave = self.extrair_chave(texto)
+        if chave and len(chave) == 44:
+            modelo = getattr(self, "_modelo_chave", None)
+            if modelo and chave[20:22] == modelo:
+                total += 0.30
+
+        return min(total, 1.0)
+
+    def extrair_chave(self, texto: str) -> str | None:
+        """
+        Extrai a chave de acesso de 44 dígitos.
+        Implementação única — todos os documentos com chave usam o mesmo padrão.
+        """
+        chaves = re.findall(r"(?:\d\s*){44}", texto)
+        if chaves:
+            return re.sub(r"\D", "", chaves[0])
+        return None
+
+    def extrair_numero(self, texto: str) -> str | None:
+        """
+        Extrai o número do documento.
+        Tenta os padrões mais comuns; subclasses podem sobrescrever
+        se o documento tiver um padrão específico.
+        """
+        padroes = getattr(self, "_padroes_numero", [
+            r"N[ºo°]\.?\s*[\d\.]+",
+            r"NÚMERO[:\s]+([\d\.]+)",
+            r"NUMERO[:\s]+([\d\.]+)",
+        ])
+        for padrao in padroes:
+            m = re.search(padrao, texto, re.IGNORECASE)
+            if m:
+                numero = (m.group(1) if m.lastindex else m.group(0))
+                numero = re.sub(r"\D", "", numero)
+                try:
+                    return str(int(numero))
+                except ValueError:
+                    continue
+        return None
 
     def extrair(self, texto: str) -> dict:
-        """
-        Executa o processo completo de extração de dados estruturados.
-
-        Este método segue o padrão Template Method:
-        a estrutura é fixa, mas os detalhes são implementados pelas subclasses.
-
-        Retorna:
-            dict com os campos padronizados do documento
-        """
         return {
-            "tipo": self.tipo,
-            "numero": self.extrair_numero(texto),
-            "chave": self.extrair_chave(texto),
-            "emissor": self.extrair_emissor(texto),
+            "tipo":    self.tipo,
+            "numero":  self.extrair_numero(texto) or "",
+            "chave":   self.extrair_chave(texto) or "",
+            "emissor": self.extrair_emissor(texto) or "",
         }
-
-
-    @abstractmethod
-    def extrair_numero(self, texto: str) -> str:
-        """
-        Extrai o número da nota fiscal a partir do texto bruto.
-        """
-        pass
-
-
-    @abstractmethod
-    def extrair_chave(self, texto: str) -> str:
-        """
-        Extrai a chave de acesso (44 dígitos) do documento.
-        """
-        pass
-
-
-    @abstractmethod
-    def extrair_emissor(self, texto: str) -> str:
-        """
-        Extrai o nome do emissor (empresa responsável pela emissão).
-        """
-        pass
