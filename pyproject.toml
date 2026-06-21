@@ -1,0 +1,15 @@
+[project]
+name = "beatrix-a-arquivista"
+version = "0.1.0"
+description = "Automação e arquivamento de documentos"
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    "lxml>=4.9",
+    "pymupdf>=1.23",
+    "pywin32>=312; sys_platform == 'win32'",
+    "reportlab>=4.0",
+    "schedule>=1.2",
+    "watchdog>=4.0",
+]

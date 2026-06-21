@@ -1,6 +1,7 @@
 from .base import Extrator
 import re
 
+
 class CTeExtrator(Extrator):
     tipo = "CT-E"
     _modelo_chave = "57"
@@ -21,4 +22,20 @@ class CTeExtrator(Extrator):
                 e = m.group(1).strip()
                 if len(e) > 3:
                     return e.replace(".", " ").strip()
+        return None
+
+    def extrair_destinatario(self, texto):
+        """
+        CT-e: destinatário é quem recebe a carga.
+        Aparece na seção 'Destinatário' com CNPJ/CPF.
+        """
+        for padrao in [
+            r"DESTINAT[AÁ]RIO.*?CNPJ[:\s]*"
+            r"(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\.\s/]?\d{4}[\-\s]?\d{2})",
+            r"DESTINAT[AÁ]RIO.*?CPF[:\s]*"
+            r"(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[\-\s]?\d{2})",
+        ]:
+            m = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
+            if m:
+                return re.sub(r"\D", "", m.group(1))
         return None

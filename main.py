@@ -4,38 +4,20 @@ Beatrix — Arquivista de Documentos Fiscais
 Renomeia e organiza PDFs e XMLs fiscais no padrão:
     TIPO NUMERO EMISSOR.pdf
 
+Com separação por empresa quando beatrix.json contém o mapa de CNPJs.
+
 Uso:
     Coloque arquivos na pasta /entrada
     Execute:  python main.py
-    Resultado em /saida
+    Resultado em /saida  (ou /saida/<empresa>/ se configurado)
 """
+import json
 import os
-import sys
 
-from modulos.utils import sanitizar, copiar, garantir_pasta
-from modulos.xml_extrator import extrair_xml
-from modulos.geradores.pdf_generator import gerar_pdf_de_xml
-from modulos.extratores.nfe    import NFeExtrator
-from modulos.extratores.nfce   import NFCeExtrator
-from modulos.extratores.nfse   import NFSeExtrator
-from modulos.extratores.cte    import CTeExtrator
-from modulos.extratores.cte_os import CTeOSExtrator
-from modulos.extratores.mdfe   import MDFeExtrator
-from modulos.extratores.bpe    import BPeExtrator
+from modulos.utils import garantir_pasta
+from modulos.pipeline import processar_arquivo
 
-try:
-    import fitz
-    PYMUPDF_OK = True
-except ImportError:
-    PYMUPDF_OK = False
-
-# Ordem: do mais específico ao mais genérico
-EXTRATORES = (
-    MDFeExtrator(), BPeExtrator(), CTeOSExtrator(),
-    CTeExtrator(), NFCeExtrator(), NFSeExtrator(), NFeExtrator(),
-)
-
-BASE   = os.path.dirname(os.path.abspath(__file__))
+BASE    = os.path.dirname(os.path.abspath(__file__))
 ENTRADA = os.path.join(BASE, "entrada")
 SAIDA   = os.path.join(BASE, "saida")
 
@@ -43,40 +25,24 @@ garantir_pasta(ENTRADA)
 garantir_pasta(SAIDA)
 
 
-def _nome_saida(tipo: str, numero: str, emissor: str) -> str:
-    return f"{sanitizar(tipo)} {sanitizar(numero)} {sanitizar(emissor)}.pdf"
-
-
-def _processar_pdf(path: str) -> str:
-    if not PYMUPDF_OK:
-        raise ImportError("PyMuPDF não instalado. Execute: pip install pymupdf")
-    texto = ""
-    with fitz.open(path) as pdf:
-        for p in pdf:
-            texto += p.get_text()
-    texto = texto.upper()
-
-    melhor, melhor_score = None, 0.0
-    for ext in EXTRATORES:
-        s = ext.score(texto)
-        if s > melhor_score:
-            melhor_score, melhor = s, ext
-
-    if melhor is None or melhor_score < 0.30:
-        raise ValueError(f"Documento não reconhecido (score máximo: {melhor_score:.2f})")
-
-    doc = melhor.extrair(texto)
-    return _nome_saida(doc["tipo"], doc["numero"] or "0", doc["emissor"] or "DESCONHECIDO")
-
-
-def _processar_xml(path: str) -> str:
-    doc = extrair_xml(path)
-    nome = _nome_saida(doc["tipo"], doc["numero"] or "0", doc["emissor"] or "DESCONHECIDO")
-    gerar_pdf_de_xml(doc, os.path.join(SAIDA, nome))
-    return nome
+def _carregar_empresas() -> dict:
+    cfg_path = os.path.join(BASE, "beatrix.json")
+    if not os.path.exists(cfg_path):
+        return {}
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        return {k: v for k, v in cfg.get("empresas", {}).items()
+                if not k.startswith("_")}
+    except Exception:
+        return {}
 
 
 def main():
+    empresas = _carregar_empresas()
+    if empresas:
+        print(f"[INFO] {len(empresas)} empresa(s) mapeada(s) — separando por CNPJ.")
+
     arquivos = [f for f in os.listdir(ENTRADA)
                 if os.path.isfile(os.path.join(ENTRADA, f))]
 
@@ -87,18 +53,10 @@ def main():
     ok = err = 0
     for nome in arquivos:
         path = os.path.join(ENTRADA, nome)
-        ext  = os.path.splitext(nome)[1].lower()
         try:
-            if ext == ".pdf":
-                novo = _processar_pdf(path)
-                copiar(path, os.path.join(SAIDA, novo))
-                print(f"[OK] {nome} → {novo}  (renomeado)")
-            elif ext == ".xml":
-                novo = _processar_xml(path)
-                print(f"[OK] {nome} → {novo}  (gerado)")
-            else:
-                print(f"[IGNORADO] {nome}: extensão não suportada")
-                continue
+            r = processar_arquivo(path, SAIDA, empresas or None)
+            destino_rel = os.path.relpath(r["destino"], BASE)
+            print(f"[OK] {nome} → {destino_rel}  ({r['operacao']})")
             ok += 1
         except ValueError as e:
             print(f"[IGNORADO] {nome}: {e}")

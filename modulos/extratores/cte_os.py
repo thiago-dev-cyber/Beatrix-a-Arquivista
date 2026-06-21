@@ -1,6 +1,7 @@
 from .base import Extrator
 import re
 
+
 class CTeOSExtrator(Extrator):
     tipo = "CT-E OS"
     _modelo_chave = "67"
@@ -18,4 +19,17 @@ class CTeOSExtrator(Extrator):
                 e = m.group(1).strip()
                 if len(e) > 3:
                     return e.replace(".", " ").strip()
+        return None
+
+    def extrair_destinatario(self, texto):
+        """CT-e OS: tomador do serviço, identificado por CNPJ ou CPF."""
+        for padrao in [
+            r"TOMADOR.*?CNPJ[:\s]*"
+            r"(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\.\s/]?\d{4}[\-\s]?\d{2})",
+            r"DESTINAT[AÁ]RIO.*?CNPJ[:\s]*"
+            r"(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\.\s/]?\d{4}[\-\s]?\d{2})",
+        ]:
+            m = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
+            if m:
+                return re.sub(r"\D", "", m.group(1))
         return None

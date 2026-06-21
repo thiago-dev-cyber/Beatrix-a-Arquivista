@@ -1,6 +1,7 @@
 from .base import Extrator
 import re
 
+
 class MDFeExtrator(Extrator):
     tipo = "MDF-E"
     _modelo_chave = "58"
@@ -23,4 +24,11 @@ class MDFeExtrator(Extrator):
                 e = m.group(1).strip()
                 if len(e) > 3:
                     return e.replace(".", " ").strip()
+        return None
+
+    def extrair_destinatario(self, texto):
+        """
+        MDF-e é um manifesto de carga — não tem destinatário único.
+        Retorna None por design.
+        """
         return None

@@ -1,6 +1,7 @@
 from .base import Extrator
 import re
 
+
 class NFSeExtrator(Extrator):
     tipo = "NFS-E"
     pesos = {
@@ -52,4 +53,21 @@ class NFSeExtrator(Extrator):
                 e = m.group(1).strip()
                 if len(e) > 3:
                     return e.replace(".", " ").strip()
+        return None
+
+    def extrair_destinatario(self, texto):
+        """
+        NFS-e: tomador de serviços identificado por CNPJ ou CPF.
+        """
+        for padrao in [
+            r"TOMADOR\s+DE\s+SERVI[CÇ]OS.*?CNPJ[:\s]*"
+            r"(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\.\s/]?\d{4}[\-\s]?\d{2})",
+            r"TOMADOR\s+DE\s+SERVI[CÇ]OS.*?CPF[:\s]*"
+            r"(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[\-\s]?\d{2})",
+            r"TOMADOR.*?CNPJ[:\s]*"
+            r"(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\.\s/]?\d{4}[\-\s]?\d{2})",
+        ]:
+            m = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
+            if m:
+                return re.sub(r"\D", "", m.group(1))
         return None

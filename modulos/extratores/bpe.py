@@ -1,6 +1,7 @@
 from .base import Extrator
 import re
 
+
 class BPeExtrator(Extrator):
     tipo = "BP-E"
     _modelo_chave = "63"
@@ -21,4 +22,18 @@ class BPeExtrator(Extrator):
                 e = m.group(1).strip()
                 if len(e) > 3:
                     return e.replace(".", " ").strip()
+        return None
+
+    def extrair_destinatario(self, texto):
+        """
+        BP-e: passageiro identificado por CPF.
+        """
+        for padrao in [
+            r"PASSAGEIRO.*?CPF[:\s]*(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[\-\s]?\d{2})",
+            r"CPF\s+DO\s+PASSAGEIRO[:\s]*(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[\-\s]?\d{2})",
+            r"CPF[:\s]*(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[\-\s]?\d{2})",
+        ]:
+            m = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
+            if m:
+                return re.sub(r"\D", "", m.group(1))
         return None
