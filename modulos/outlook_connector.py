@@ -29,6 +29,9 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
+# Constante COM para Inbox — independente do idioma do Outlook
+_OL_FOLDER_INBOX = 6
+
 
 # ── Dependência opcional (só Windows) ────────────────────────────────────────
 
@@ -62,6 +65,9 @@ class FiltroEmail:
                             None = qualquer remetente.
         pasta_outlook:      Nome da pasta do Outlook a varrer.
                             Suporta subpastas: "Caixa de Entrada/Fiscais".
+                            Use "Caixa de Entrada" ou "Inbox" para a caixa principal
+                            — ambos são resolvidos via GetDefaultFolder(6), que é
+                            imune ao idioma configurado no Outlook.
         apenas_nao_lidos:   Se True, processa apenas e-mails não lidos.
         marcar_como_lido:   Se True, marca os e-mails processados como lidos.
         tamanho_min_kb:     Tamanho mínimo do anexo em KB (None = sem limite).
@@ -102,7 +108,6 @@ class FiltroEmail:
     @property
     def dt_fim(self) -> Optional[datetime]:
         dt = self._parse_data(self.data_fim)
-        # fim do dia, inclusivo
         if dt:
             return dt.replace(hour=23, minute=59, second=59)
         return dt
@@ -133,7 +138,166 @@ class ResultadoBaixar:
         )
 
 
+# ── Resultado de movimentação ─────────────────────────────────────────────────
+
+@dataclass
+class ResultadoMover:
+    movidos:   list[tuple[str, str]] = field(default_factory=list)  # (assunto, pasta_destino)
+    ignorados: int = 0
+    erros:     list[str] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.movidos)
+
+    def resumo(self) -> str:
+        return (
+            f"Movidos: {self.total}  |  "
+            f"Ignorados: {self.ignorados}  |  "
+            f"Erros: {len(self.erros)}"
+        )
+
+
+# ── Regras de movimentação ────────────────────────────────────────────────────
+
+@dataclass
+class RegraMovimento:
+    """
+    Define uma regra que mapeia e-mails para uma pasta de destino no Outlook.
+
+    A regra avalia cada e-mail e retorna o caminho da pasta de destino
+    (string no formato "Caixa de Entrada/Subpasta") ou None se não casar.
+
+    Atributos:
+        destino:          Caminho da pasta de destino no Outlook.
+                          Ex: "Caixa de Entrada/Lojas/QC Matriz"
+        remetentes:       Move o e-mail se o remetente estiver nesta lista.
+                          Comparação case-insensitive, por sufixo ou exato.
+        palavras_assunto: Move se o assunto contiver ao menos UMA das palavras (OR).
+        palavras_corpo:   Move se o corpo contiver ao menos UMA das palavras (OR).
+        remetentes_corpo: Move se o corpo contiver o endereço de e-mail de algum
+                          dos remetentes desta lista (útil para e-mails encaminhados).
+
+    Lógica: todas as condições definidas devem ser satisfeitas (AND entre grupos,
+    OR dentro de cada grupo).
+    """
+    destino:           str
+    remetentes:        list[str] = field(default_factory=list)
+    palavras_assunto:  list[str] = field(default_factory=list)
+    palavras_corpo:    list[str] = field(default_factory=list)
+    remetentes_corpo:  list[str] = field(default_factory=list)
+
+    def destinos_possiveis(self) -> list[str]:
+        """Retorna os caminhos de pasta que esta regra pode usar."""
+        return [self.destino]
+
+    def avaliar(self, email) -> Optional[str]:
+        """
+        Avalia o e-mail contra a regra.
+        Retorna o caminho de destino se casar, None caso contrário.
+        """
+        try:
+            remetente = (email.SenderEmailAddress or "").lower().strip()
+        except Exception:
+            remetente = ""
+
+        try:
+            assunto = (email.Subject or "").upper()
+        except Exception:
+            assunto = ""
+
+        # Corpo só é lido se necessário (operação cara no COM)
+        _corpo: Optional[str] = None
+
+        def corpo() -> str:
+            nonlocal _corpo
+            if _corpo is None:
+                try:
+                    _corpo = (email.Body or "").lower()
+                except Exception:
+                    _corpo = ""
+            return _corpo
+
+        # Remetente direto
+        if self.remetentes:
+            if not any(r.lower() in remetente for r in self.remetentes):
+                return None
+
+        # Assunto
+        if self.palavras_assunto:
+            if not any(p.upper() in assunto for p in self.palavras_assunto):
+                return None
+
+        # Corpo — palavras
+        if self.palavras_corpo:
+            if not any(p.lower() in corpo() for p in self.palavras_corpo):
+                return None
+
+        # Corpo — remetentes mencionados (útil para encaminhados)
+        if self.remetentes_corpo:
+            if not any(r.lower() in corpo() for r in self.remetentes_corpo):
+                return None
+
+        return self.destino
+
+
+@dataclass
+class RegraMovimentoPorRemetente(RegraMovimento):
+    """
+    Atalho para regras onde o destino é determinado pelo remetente.
+
+    Recebe um dict {email_remetente: pasta_destino} e avalia o e-mail
+    contra todos os pares de uma vez, incluindo busca no corpo do e-mail
+    para capturar mensagens encaminhadas.
+
+    Args:
+        mapa:             Dict mapeando e-mail do remetente → pasta de destino.
+                          Ex: {"loja2@empresa.com.br": "Caixa de Entrada/Lojas/QC Matriz"}
+        buscar_no_corpo:  Se True (padrão), busca os endereços no corpo também,
+                          útil para e-mails encaminhados onde o remetente real
+                          aparece no texto mas não no campo From.
+    """
+    mapa:            dict[str, str] = field(default_factory=dict)
+    buscar_no_corpo: bool = True
+
+    # destino é ignorado nesta subclasse — cada entrada do mapa tem seu próprio destino
+    destino: str = ""
+
+    def destinos_possiveis(self) -> list[str]:
+        return list(set(self.mapa.values()))
+
+    def avaliar(self, email) -> Optional[str]:
+        try:
+            remetente = (email.SenderEmailAddress or "").lower().strip()
+        except Exception:
+            remetente = ""
+
+        # 1. Remetente direto
+        for email_loja, pasta in self.mapa.items():
+            if email_loja.lower() == remetente:
+                return pasta
+
+        # 2. Busca no corpo (encaminhados)
+        if self.buscar_no_corpo:
+            try:
+                corpo = (email.Body or "").lower()
+            except Exception:
+                corpo = ""
+            for email_loja, pasta in self.mapa.items():
+                if email_loja.lower() in corpo:
+                    return pasta
+
+        return None
+
+
 # ── Conector principal ────────────────────────────────────────────────────────
+
+# Nomes alternativos para a caixa de entrada em diferentes idiomas do Outlook
+_NOMES_INBOX = frozenset({
+    "caixa de entrada", "inbox", "entrada", "posteingang",
+    "bandeja de entrada", "boîte de réception",
+})
+
 
 class OutlookConnector:
     """
@@ -151,6 +315,7 @@ class OutlookConnector:
         self.pasta_destino.mkdir(parents=True, exist_ok=True)
         self._conta = conta
         self._outlook = None   # lazy init
+        self._app = None
 
     # ── Conexão ───────────────────────────────────────────────────────────────
 
@@ -159,7 +324,8 @@ class OutlookConnector:
             return
         win32 = _importar_win32()
         try:
-            self._outlook = win32.Dispatch("Outlook.Application").GetNamespace("MAPI")
+            self._app = win32.Dispatch("Outlook.Application")
+            self._outlook = self._app.GetNamespace("MAPI")
             log.info("Conectado ao Outlook via COM.")
         except Exception as e:
             raise RuntimeError(
@@ -169,24 +335,40 @@ class OutlookConnector:
 
     def _pasta_outlook(self, caminho: str):
         """
-        Resolve a pasta do Outlook pelo nome, suportando subpastas
-        separadas por "/" ex: "Caixa de Entrada/Fiscais".
+        Resolve a pasta do Outlook pelo nome.
+
+        A caixa de entrada é sempre resolvida via GetDefaultFolder(6),
+        que é independente do idioma configurado no Outlook (PT, EN, DE…).
+        Subpastas são navegadas pelo nome a partir da inbox.
+
+        Suporta o formato "Caixa de Entrada/Subpasta" ou simplesmente "Subpasta"
+        quando a pasta raiz for identificada como a inbox.
         """
         self._conectar()
 
-        if self._conta:
-            raiz = None
-            for acc in self._outlook.Folders:
-                if acc.Name.lower() == self._conta.lower():
-                    raiz = acc
-                    break
-            if raiz is None:
-                raise ValueError(f"Conta '{self._conta}' não encontrada no Outlook.")
-        else:
-            raiz = self._outlook.Folders.Item(1)  # primeira conta
-
         partes = [p.strip() for p in caminho.split("/") if p.strip()]
-        pasta_atual = raiz
+
+        # Determina a pasta raiz
+        if partes and partes[0].lower() in _NOMES_INBOX:
+            # Usa GetDefaultFolder(6) — robusto, independe de idioma
+            pasta_atual = self._outlook.GetDefaultFolder(_OL_FOLDER_INBOX)
+            log.debug(f"Inbox resolvida via GetDefaultFolder(6): '{pasta_atual.Name}'")
+            partes = partes[1:]  # remove a parte "Caixa de Entrada" do caminho
+        else:
+            # Pasta fora da inbox: navega a partir da conta
+            if self._conta:
+                raiz = None
+                for acc in self._outlook.Folders:
+                    if acc.Name.lower() == self._conta.lower():
+                        raiz = acc
+                        break
+                if raiz is None:
+                    raise ValueError(f"Conta '{self._conta}' não encontrada no Outlook.")
+            else:
+                raiz = self._outlook.Folders.Item(1)
+            pasta_atual = raiz
+
+        # Navega pelas subpastas restantes
         for parte in partes:
             encontrado = False
             for sub in pasta_atual.Folders:
@@ -195,13 +377,33 @@ class OutlookConnector:
                     encontrado = True
                     break
             if not encontrado:
+                disponiveis = [s.Name for s in pasta_atual.Folders]
                 raise ValueError(
-                    f"Pasta '{parte}' não encontrada dentro de '{pasta_atual.Name}'. "
-                    f"Pastas disponíveis: {[s.Name for s in pasta_atual.Folders]}"
+                    f"Subpasta '{parte}' não encontrada dentro de '{pasta_atual.Name}'. "
+                    f"Subpastas disponíveis: {disponiveis}"
                 )
+
         return pasta_atual
 
     # ── Filtros ───────────────────────────────────────────────────────────────
+
+    def _construir_restrict(self, filtro: FiltroEmail) -> str | None:
+        """
+        Monta a string de filtro MAPI para Items.Restrict() do Outlook.
+
+        Retorna None quando nenhum Restrict deve ser aplicado — neste caso
+        o chamador deve iterar Items diretamente, como a POC original faz.
+
+        Só aplica Restrict para filtro de não-lidos, usando sintaxe MAPI
+        simples ([Unread]) que é estável em todas as versões do Outlook.
+        Evita sintaxe DASL (@SQL=...) que quebra a iteração em muitas
+        configurações de Outlook/Windows.
+        """
+        if filtro.apenas_nao_lidos:
+            return "[Unread] = True"
+        # Sem filtro de leitura: não aplica Restrict
+        # (iterar Items direto é mais confiável do que qualquer query DASL genérica)
+        return None
 
     def _email_passa_filtro(self, email, filtro: FiltroEmail) -> tuple[bool, str]:
         """
@@ -216,14 +418,13 @@ class OutlookConnector:
         if classe != 43:  # 43 = olMail
             return False, "não é e-mail"
 
-        # Não lidos
+        # Não lidos (dupla checagem — o Restrict já filtrou, mas garante)
         if filtro.apenas_nao_lidos and email.UnRead is False:
             return False, "já lido"
 
         # Data
         try:
             dt_recebido = email.ReceivedTime
-            # COM retorna datetime com timezone; normaliza para naive
             if hasattr(dt_recebido, 'replace'):
                 dt_recebido = dt_recebido.replace(tzinfo=None)
         except Exception:
@@ -247,19 +448,19 @@ class OutlookConnector:
         # Palavras no assunto
         if filtro.palavras_assunto:
             try:
-                assunto = (email.Subject or "").lower()
+                assunto = (email.Subject or "").upper()
             except Exception:
                 assunto = ""
-            if not any(p.lower() in assunto for p in filtro.palavras_assunto):
+            if not any(p.upper() in assunto for p in filtro.palavras_assunto):
                 return False, "assunto não bate"
 
         # Palavras no corpo
         if filtro.palavras_corpo:
             try:
-                corpo = (email.Body or "").lower()
+                corpo = (email.Body or "").upper()
             except Exception:
                 corpo = ""
-            if not any(p.lower() in corpo for p in filtro.palavras_corpo):
+            if not any(p.upper() in corpo for p in filtro.palavras_corpo):
                 return False, "corpo não bate"
 
         return True, ""
@@ -309,6 +510,9 @@ class OutlookConnector:
         """
         Varre a pasta do Outlook e baixa os anexos que passarem no filtro.
 
+        Usa Items.Restrict() para pré-filtrar no lado do Outlook (obrigatório
+        para que a iteração funcione corretamente via win32com).
+
         Returns:
             ResultadoBaixar com a lista de arquivos salvos e estatísticas.
         """
@@ -321,15 +525,21 @@ class OutlookConnector:
             log.error(str(e))
             return resultado
 
-        # Ordena por data mais recente primeiro
         try:
             itens = pasta.Items
+            filtro_restrict = self._construir_restrict(filtro)
+            if filtro_restrict is not None:
+                # Só aplica Restrict quando necessário (ex: apenas_nao_lidos)
+                # Restrict com query desnecessária quebra a iteração em várias
+                # versões do Outlook — iterar Items direto é o comportamento mais robusto
+                itens = itens.Restrict(filtro_restrict)
             itens.Sort("[ReceivedTime]", True)
         except Exception as e:
             resultado.erros.append(f"Erro ao listar e-mails: {e}")
+            log.error(f"Erro ao listar e-mails: {e}")
             return resultado
 
-        log.info(f"Varrendo '{filtro.pasta_outlook}' — {itens.Count} itens.")
+        log.info(f"Varrendo '{filtro.pasta_outlook}' (Restrict aplicado).")
 
         for email in itens:
             try:
@@ -339,7 +549,16 @@ class OutlookConnector:
                     log.debug(f"E-mail ignorado: {motivo}")
                     continue
 
+                try:
+                    assunto = email.Subject or "(sem assunto)"
+                except Exception:
+                    assunto = "(sem assunto)"
+
+                log.debug(f"Processando: '{assunto}'")
+
                 anexos = email.Attachments
+                email_teve_anexo_valido = False
+
                 for i in range(1, anexos.Count + 1):
                     anexo = anexos.Item(i)
                     passa_anx, motivo_anx = self._anexo_passa_filtro(anexo, filtro)
@@ -351,13 +570,14 @@ class OutlookConnector:
                     try:
                         anexo.SaveAsFile(str(caminho))
                         resultado.baixados.append(str(caminho))
-                        log.info(f"Baixado: {caminho.name}")
+                        email_teve_anexo_valido = True
+                        log.info(f"Baixado: {caminho.name}  ←  '{assunto}'")
                     except Exception as e:
                         msg = f"Erro ao salvar '{anexo.FileName}': {e}"
                         resultado.erros.append(msg)
                         log.error(msg)
 
-                if filtro.marcar_como_lido and email.UnRead:
+                if filtro.marcar_como_lido and email_teve_anexo_valido:
                     try:
                         email.UnRead = False
                         email.Save()
@@ -379,7 +599,6 @@ class OutlookConnector:
         Útil para descobrir o nome exato da pasta antes de configurar o filtro.
         """
         self._conectar()
-        conta = self._outlook.Folders.Item(1)
 
         def _percorrer(pasta, prefixo=""):
             nomes = [prefixo + pasta.Name]
@@ -393,9 +612,108 @@ class OutlookConnector:
                 return _percorrer(pasta_raiz)
             except ValueError:
                 return []
-        return _percorrer(conta)
+
+        # Usa GetDefaultFolder para a inbox como ponto de partida confiável
+        inbox = self._outlook.GetDefaultFolder(_OL_FOLDER_INBOX)
+        return _percorrer(inbox)
 
     def contas_disponiveis(self) -> list[str]:
         """Lista as contas configuradas no Outlook."""
         self._conectar()
         return [acc.Name for acc in self._outlook.Folders]
+
+    def mover_emails(
+        self,
+        regras: list["RegraMovimento"],
+        filtro: Optional[FiltroEmail] = None,
+    ) -> "ResultadoMover":
+        """
+        Percorre a pasta configurada no filtro e move cada e-mail para a pasta
+        de destino definida pela primeira regra que casar.
+
+        Args:
+            regras:  Lista de RegraMovimento, avaliadas em ordem. A primeira que
+                     retornar um destino não-None vence.
+            filtro:  FiltroEmail com a pasta de origem e critérios opcionais.
+                     Se None, usa a Caixa de Entrada sem filtro de data/assunto.
+
+        Returns:
+            ResultadoMover com contadores e lista de erros.
+        """
+        if filtro is None:
+            filtro = FiltroEmail(extensoes=None)
+
+        resultado = ResultadoMover()
+
+        try:
+            pasta_origem = self._pasta_outlook(filtro.pasta_outlook)
+        except (ValueError, RuntimeError) as e:
+            resultado.erros.append(str(e))
+            log.error(str(e))
+            return resultado
+
+        # Resolve as pastas de destino de todas as regras de uma vez
+        # para evitar falhar no meio da execução
+        pastas_destino: dict[str, object] = {}
+        for regra in regras:
+            for destino in regra.destinos_possiveis():
+                if destino not in pastas_destino:
+                    try:
+                        pastas_destino[destino] = self._pasta_outlook(destino)
+                    except (ValueError, RuntimeError) as e:
+                        resultado.erros.append(f"Pasta de destino não encontrada: {destino} — {e}")
+                        log.error(f"Pasta de destino não encontrada: {destino} — {e}")
+                        return resultado
+
+        try:
+            itens = pasta_origem.Items
+            filtro_restrict = self._construir_restrict(filtro)
+            if filtro_restrict is not None:
+                itens = itens.Restrict(filtro_restrict)
+            itens.Sort("[ReceivedTime]", True)
+        except Exception as e:
+            resultado.erros.append(f"Erro ao listar e-mails: {e}")
+            log.error(f"Erro ao listar e-mails: {e}")
+            return resultado
+
+        # Coleta numa lista antes de iterar para evitar problemas ao mover
+        # (mover durante a iteração do COM pode pular ou repetir itens)
+        emails_para_processar = list(itens)
+
+        log.info(f"Avaliando {len(emails_para_processar)} e-mail(s) para mover.")
+
+        for email in emails_para_processar:
+            try:
+                # Verifica filtros básicos (data, remetente, assunto)
+                if filtro:
+                    passa, motivo = self._email_passa_filtro(email, filtro)
+                    if not passa:
+                        resultado.ignorados += 1
+                        log.debug(f"Ignorado ({motivo}): {email.Subject!r}")
+                        continue
+
+                # Avalia regras em ordem — primeira que casar vence
+                destino_caminho = None
+                for regra in regras:
+                    destino_caminho = regra.avaliar(email)
+                    if destino_caminho is not None:
+                        break
+
+                if destino_caminho is None:
+                    resultado.ignorados += 1
+                    log.debug(f"Nenhuma regra casou: {email.Subject!r}")
+                    continue
+
+                pasta_destino_obj = pastas_destino[destino_caminho]
+                assunto = email.Subject or "(sem assunto)"
+                email.Move(pasta_destino_obj)
+                resultado.movidos.append((assunto, destino_caminho))
+                log.info(f"Movido → {destino_caminho!r}: {assunto!r}")
+
+            except Exception as e:
+                msg = f"Erro ao processar e-mail: {e}"
+                resultado.erros.append(msg)
+                log.error(msg)
+
+        log.info(resultado.resumo())
+        return resultado

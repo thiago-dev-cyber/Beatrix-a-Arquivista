@@ -13,15 +13,34 @@ class CTeExtrator(Extrator):
     }
 
     def extrair_emissor(self, texto):
+
         for padrao in [
-            r"Emitente\s*\n\s*(.+)", r"EMITENTE[:\s]+(.+)",
-            r"Transportador[:\s]+(.+)", r"RAZÃO SOCIAL[:\s]+(.+)",
+            r"Emitente\s*\n\s*(.+)",
+            r"EMITENTE[:\s]+(.+)",
+            r"Transportador[:\s]+(.+)",
+            r"RAZÃO SOCIAL[:\s]+(.+)",
         ]:
             m = re.search(padrao, texto, re.IGNORECASE)
+
             if m:
-                e = m.group(1).strip()
-                if len(e) > 3:
-                    return e.replace(".", " ").strip()
+                return " ".join(m.group(1).split())
+
+        linhas = [l.strip() for l in texto.splitlines() if l.strip()]
+
+        for linha in linhas[:15]:
+
+            # Ignorar linhas técnicas
+            if re.search(
+                r"CNPJ|CPF|IE|CEP|DACTE|DOCUMENTO AUXILIAR",
+                linha,
+                re.IGNORECASE
+            ):
+                continue
+
+            # Nome empresarial costuma ser grande
+            if len(linha) > 10:
+                return linha
+
         return None
 
     def extrair_destinatario(self, texto):

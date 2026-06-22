@@ -3,39 +3,55 @@
 
   "intervalo_minutos": 15,
   "extensoes": [".pdf", ".xml"],
-  "modo": "evento",
+  "modo": "agendado",
   "log_level": "INFO",
 
   "empresas": {
     "_comentario": "Mapeie o CNPJ (só dígitos) para o nome da pasta de destino.",
-    
-    "98765432000188": "empresa_beta",
-    "11222333000144": "empresa_gamma",
-    "44555666000177": "empresa_delta"
+
+    "6454654646": "aasdsadasd",
+    "651651651561651": "asdas",
+    "61651651651651": "asdsad",
+    "545465464654566": "QC-asdsad"
   },
 
   "outlook": {
-    "ativo": false,
-    "_comentario_ativo": "Mude para true para ativar a integração com Outlook.",
+    "ativo": true,
 
     "pasta": "Caixa de Entrada",
     "_comentario_pasta": "Suporta subpastas: 'Caixa de Entrada/Notas Fiscais'",
 
     "extensoes": [".pdf", ".xml"],
 
-    "palavras_assunto": [],
-    "_comentario_assunto": "Filtra e-mails cujo assunto contenha ao menos UMA das palavras. [] = sem filtro.",
+    "palavras_assunto": [
+      "nota fiscal",
+      "nf-e",
+      "nfe",
+      "nfce",
+      "nfc-e",
+      "ct-e",
+      "cte",
+      "danfe",
+      "dacte",
+      "xml",
+      "fatura",
+      "boleto"
+    ],
+    "_comentario_assunto": "Filtra e-mails cujo assunto contenha ao menos UMA das palavras (OR). [] = sem filtro.",
 
     "palavras_corpo": [],
     "_comentario_corpo": "Idem para o corpo do e-mail. [] = sem filtro.",
 
     "remetentes": [],
-    "_comentario_remetentes": "Lista de e-mails autorizados. [] = qualquer remetente.",
+    "_comentario_remetentes": "Lista de e-mails autorizados (ex: ['fiscal@fornecedor.com.br']). [] = qualquer remetente.",
 
-    "marcar_como_lido": true,
-    "apenas_nao_lidos": true,
+    "marcar_como_lido": false,
+    "apenas_nao_lidos": false,
 
-    "tamanho_min_kb": 10,
-    "tamanho_max_kb": 20480
+    "tamanho_min_kb": 5,
+    "_comentario_tamanho_min": "Ignora anexos menores que este valor. Útil para descartar imagens de assinatura.",
+
+    "tamanho_max_kb": 20480,
+    "_comentario_tamanho_max": "Ignora anexos maiores que este valor (20 MB). Ajuste conforme necessário."
   }
 }

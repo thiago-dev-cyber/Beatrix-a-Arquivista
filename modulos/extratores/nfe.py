@@ -12,9 +12,15 @@ class NFeExtrator(Extrator):
     _padroes_numero = [r"N[ºo°]\.?\s*([\d\.]+)"]
 
     def extrair_emissor(self, texto):
-        m = re.search(r"Identificação do emitente\s*\n\s*(.+)", texto, re.IGNORECASE)
-        if m:
-            return m.group(1).strip().replace(".", " ").strip()
+        for padrao in [
+            r"RECEBEMOS\s+DE\s+(.*?)\s+OS\s+PRODUTOS(?:/SERVIÇOS)?",
+            r"RECEBEMOS\s+DE\s+(.*?)\s+A\s+PRESTAÇÃO",
+            r"RECEBEMOS\s+DE\s+(.*?)\s+AS\s+MERCADORIAS",
+            r"Identificação do emitente\s*\n\s*(.+)"
+        ]:
+            m = re.search(padrao, texto, re.IGNORECASE)
+            if m:
+                return m.group(1).strip().replace(".", " ").strip()
         return None
 
     def extrair_destinatario(self, texto):

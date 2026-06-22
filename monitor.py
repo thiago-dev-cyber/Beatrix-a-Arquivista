@@ -69,7 +69,12 @@ CONFIG_PADRAO = {
         "pasta":            "Caixa de Entrada",
         "extensoes":        [".pdf", ".xml"],
         "palavras_assunto": [],
+        "palavras_corpo":   [],
+        "remetentes":       [],
         "marcar_como_lido": True,
+        "apenas_nao_lidos": True,
+        "tamanho_min_kb":   None,
+        "tamanho_max_kb":   None,
     },
 }
 
@@ -92,6 +97,66 @@ def _carregar_config() -> dict:
 def _garantir_pastas():
     for pasta in PASTAS.values():
         pasta.mkdir(parents=True, exist_ok=True)
+
+
+# ── Deduplicação PDF/XML da mesma nota ───────────────────────────────────────
+
+def _agrupar_por_chave(pasta: Path, exts: set[str]) -> dict[str, list[Path]]:
+    """
+    Agrupa arquivos da pasta /entrada pela chave da nota fiscal.
+
+    A chave é o stem do arquivo sem sufixos como '-nfe', '-cte', '-pdf', etc.
+    Arquivos sem padrão reconhecível ficam num grupo próprio com chave = nome completo.
+
+    Retorna dict { chave: [path1, path2, ...] }
+    """
+    import re
+    grupos: dict[str, list[Path]] = {}
+    # Remove sufixos descritivos comuns antes de comparar
+    _sufixo = re.compile(r'[-_](nfe|nfce|cte|cteos|mdfe|bpe|nfse|xml|pdf)$', re.IGNORECASE)
+
+    for arq in pasta.iterdir():
+        if not arq.is_file():
+            continue
+        if arq.suffix.lower() not in exts:
+            continue
+        chave = _sufixo.sub('', arq.stem).strip()
+        grupos.setdefault(chave, []).append(arq)
+
+    return grupos
+
+
+def _selecionar_arquivo(arquivos: list[Path]) -> list[Path]:
+    """
+    Dado um grupo de arquivos da mesma nota, retorna o subconjunto a processar.
+
+    Regra: se o grupo contém PDF e XML referentes à mesma nota, prefere o PDF
+    (já é o documento final) e descarta o XML — evita gerar dois arquivos de
+    saída para a mesma nota.
+
+    Se houver só um tipo, retorna todos os arquivos do grupo.
+    """
+    pdfs = [f for f in arquivos if f.suffix.lower() == ".pdf"]
+    xmls = [f for f in arquivos if f.suffix.lower() == ".xml"]
+
+    if pdfs and xmls:
+        log.info(
+            f"Deduplicação: grupo com PDF e XML detectado. "
+            f"Preferindo PDF(s): {[p.name for p in pdfs]}. "
+            f"XML(s) ignorado(s): {[x.name for x in xmls]}"
+        )
+        # Move os XMLs para /processado marcando como duplicata
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for xml in xmls:
+            destino = PASTAS["processado"] / f"{ts}_dup_{xml.name}"
+            try:
+                shutil.move(str(xml), str(destino))
+                log.info(f"XML duplicado movido para /processado: {xml.name}")
+            except Exception as e:
+                log.warning(f"Não foi possível mover XML duplicado {xml.name}: {e}")
+        return pdfs
+
+    return arquivos
 
 
 # ── Motor de processamento ────────────────────────────────────────────────────
@@ -166,21 +231,35 @@ def _aguardar_arquivo_estavel(path: Path, tentativas: int = 10, intervalo: float
 
 
 def _varrer_pasta(config: dict) -> tuple[int, int]:
-    """Processa todos os arquivos pendentes em /entrada. Retorna (ok, erros)."""
+    """
+    Processa todos os arquivos pendentes em /entrada.
+
+    Antes de processar individualmente, agrupa por nota fiscal para aplicar
+    a deduplicação PDF/XML (quando a mesma nota chega em ambos os formatos,
+    o PDF é preferido e o XML é descartado).
+
+    Retorna (ok, erros).
+    """
     ok = erros = 0
     exts = set(config.get("extensoes", [".pdf", ".xml"]))
 
-    arquivos = [
-        f for f in PASTAS["entrada"].iterdir()
-        if f.is_file() and f.suffix.lower() in exts
-    ]
+    # Agrupa por chave de nota e aplica deduplicação
+    grupos = _agrupar_por_chave(PASTAS["entrada"], exts)
 
-    if not arquivos:
+    if not grupos:
         log.debug("Nenhum arquivo pendente em /entrada.")
         return 0, 0
 
-    log.info(f"Varrendo /entrada: {len(arquivos)} arquivo(s) encontrado(s).")
-    for arq in arquivos:
+    # Flatten após deduplicação
+    arquivos_para_processar: list[Path] = []
+    for arquivos in grupos.values():
+        arquivos_para_processar.extend(_selecionar_arquivo(arquivos))
+
+    if not arquivos_para_processar:
+        return 0, 0
+
+    log.info(f"Varrendo /entrada: {len(arquivos_para_processar)} arquivo(s) a processar.")
+    for arq in arquivos_para_processar:
         if _processar_arquivo(arq, config):
             ok += 1
         else:
@@ -203,18 +282,32 @@ def _baixar_outlook(config: dict):
         log.error(f"Outlook connector indisponível: {e}")
         return
 
+    # Normaliza listas vazias para None onde o conector espera None = sem filtro
+    remetentes      = cfg_out.get("remetentes", []) or None
+    palavras_corpo  = cfg_out.get("palavras_corpo", []) or []
+    palavras_assunto = cfg_out.get("palavras_assunto", []) or []
+    tamanho_min     = cfg_out.get("tamanho_min_kb") or None
+    tamanho_max     = cfg_out.get("tamanho_max_kb") or None
+
     try:
         conector = OutlookConnector(pasta_destino=str(PASTAS["entrada"]))
         filtro = FiltroEmail(
-            extensoes=cfg_out.get("extensoes", [".pdf", ".xml"]),
-            palavras_assunto=cfg_out.get("palavras_assunto", []),
-            pasta_outlook=cfg_out.get("pasta", "Caixa de Entrada"),
-            marcar_como_lido=cfg_out.get("marcar_como_lido", True),
-            apenas_nao_lidos=True,
+            extensoes        = cfg_out.get("extensoes", [".pdf", ".xml"]),
+            palavras_assunto = palavras_assunto,
+            palavras_corpo   = palavras_corpo,
+            remetentes       = remetentes,
+            pasta_outlook    = cfg_out.get("pasta", "Caixa de Entrada"),
+            marcar_como_lido = cfg_out.get("marcar_como_lido", True),
+            apenas_nao_lidos = cfg_out.get("apenas_nao_lidos", True),
+            tamanho_min_kb   = tamanho_min,
+            tamanho_max_kb   = tamanho_max,
         )
         resultado = conector.baixar_anexos(filtro)
-        if resultado.total > 0:
+
+        if resultado.total > 0 or resultado.erros:
             log.info(f"Outlook: {resultado.resumo()}")
+        else:
+            log.debug("Outlook: nenhum anexo novo.")
     except Exception as e:
         log.error(f"Erro ao acessar Outlook: {e}")
 
@@ -237,12 +330,30 @@ def _iniciar_modo_evento(config: dict):
             if path.suffix.lower() in exts:
                 # Pequena pausa para o SO terminar de gravar
                 time.sleep(1)
+                # Verifica deduplicação antes de processar o arquivo recém-chegado
+                grupos = _agrupar_por_chave(PASTAS["entrada"], exts)
+                chave = path.stem
+                # Encontra o grupo que contém este arquivo
+                for arquivos in grupos.values():
+                    nomes = [a.name for a in arquivos]
+                    if path.name in nomes:
+                        selecionados = _selecionar_arquivo(arquivos)
+                        # Só processa se este arquivo foi selecionado (não descartado)
+                        if path in selecionados:
+                            _processar_arquivo(path, config)
+                        return
+                # Fallback: processa diretamente se não achou no grupo
                 _processar_arquivo(path, config)
 
     observer = Observer()
     observer.schedule(ManipuladorArquivo(), str(PASTAS["entrada"]), recursive=False)
     observer.start()
     log.info(f"Modo evento ativo — monitorando: {PASTAS['entrada']}")
+
+    # FIX: no modo evento o Outlook também precisa ser consultado periodicamente.
+    # Faz uma consulta inicial ao iniciar e depois a cada ciclo do loop principal.
+    _baixar_outlook(config)
+
     return observer
 
 
@@ -345,10 +456,22 @@ def main():
     signal.signal(signal.SIGTERM, _encerrar)
 
     # Loop principal
+    # No modo evento, consulta o Outlook a cada intervalo configurado
+    intervalo_outlook = config.get("intervalo_minutos", 15) * 60  # segundos
+    ultimo_outlook = time.time()
+
     try:
         while True:
             if sched:
                 sched.run_pending()
+
+            # FIX: no modo evento puro, puxa Outlook periodicamente
+            if observer and not sched:
+                agora = time.time()
+                if agora - ultimo_outlook >= intervalo_outlook:
+                    _baixar_outlook(config)
+                    ultimo_outlook = agora
+
             time.sleep(1)
     except KeyboardInterrupt:
         _encerrar(None, None)
