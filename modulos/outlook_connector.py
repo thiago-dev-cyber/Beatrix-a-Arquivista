@@ -84,6 +84,7 @@ class FiltroEmail:
     marcar_como_lido:  bool = False
     tamanho_min_kb:    Optional[int] = None
     tamanho_max_kb:    Optional[int] = None
+    mover_para:        str | None = None
 
     def _parse_data(self, v) -> Optional[datetime]:
         if v is None:
@@ -576,13 +577,40 @@ class OutlookConnector:
                         msg = f"Erro ao salvar '{anexo.FileName}': {e}"
                         resultado.erros.append(msg)
                         log.error(msg)
+                        
+                
 
-                if filtro.marcar_como_lido and email_teve_anexo_valido:
-                    try:
-                        email.UnRead = False
-                        email.Save()
-                    except Exception:
-                        pass
+                if email_teve_anexo_valido:
+
+                    # Marca como lido
+                    if filtro.marcar_como_lido:
+                        try:
+                            email.UnRead = False
+                            email.Save()
+                        except Exception:
+                            pass
+
+                    # Move para outra pasta se configurado
+                    if filtro.mover_para:
+                        try:
+                            pasta_destino = self._pasta_outlook(
+                                filtro.mover_para
+                            )
+
+                            email.Move(pasta_destino)
+
+                            log.info(
+                                f"E-mail movido para '{filtro.mover_para}' ← '{assunto}'"
+                            )
+
+                        except Exception as e:
+                            msg = (
+                                f"Erro ao mover e-mail para "
+                                f"'{filtro.mover_para}': {e}"
+                            )
+
+                            resultado.erros.append(msg)
+                            log.error(msg)
 
             except Exception as e:
                 resultado.erros.append(f"Erro ao processar e-mail: {e}")

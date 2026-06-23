@@ -205,6 +205,7 @@ def _puxar_outlook(cfg: dict):
         apenas_nao_lidos = cfg_out.get("apenas_nao_lidos", True),
         tamanho_min_kb   = cfg_out.get("tamanho_min_kb")   or None,
         tamanho_max_kb   = cfg_out.get("tamanho_max_kb")   or None,
+        mover_para       = "Caixa de Entrada/Notas",
     )
 
     try:

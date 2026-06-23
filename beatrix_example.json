@@ -34,9 +34,8 @@
       "danfe",
       "dacte",
       "xml",
-      "fatura",
-      "boleto"
     ],
+
     "_comentario_assunto": "Filtra e-mails cujo assunto contenha ao menos UMA das palavras (OR). [] = sem filtro.",
 
     "palavras_corpo": [],

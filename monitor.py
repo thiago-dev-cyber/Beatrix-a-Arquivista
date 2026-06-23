@@ -75,6 +75,7 @@ CONFIG_PADRAO = {
         "apenas_nao_lidos": True,
         "tamanho_min_kb":   None,
         "tamanho_max_kb":   None,
+        "mover_para"    :   "Caixa de Entrada/Notas"
     },
 }
 
@@ -301,6 +302,7 @@ def _baixar_outlook(config: dict):
             apenas_nao_lidos = cfg_out.get("apenas_nao_lidos", True),
             tamanho_min_kb   = tamanho_min,
             tamanho_max_kb   = tamanho_max,
+            mover_para       = cfg_out.get("mover_para", None)
         )
         resultado = conector.baixar_anexos(filtro)
 
